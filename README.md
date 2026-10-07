@@ -11,7 +11,10 @@ PWA para iPhone: grabás una nota de voz, ves la transcripción en vivo y al toc
    micrófono a PCM 16-bit 16 kHz (`web/pcm-worklet.js`) y muestra el texto a medida que llega (`web/live.js`).
 3. **Nota final** — en paralelo graba el mismo audio con MediaRecorder (Safari: `audio/mp4`). Al tocar stop
    lo manda a `captura-voz`, que hace la transcripción final con Gemini y crea la página en Notion.
-4. **Respaldo** — si el audio falla, manda el texto en vivo a `captura-voz` en modo texto
+4. **Revisar y editar** (por defecto, se apaga en la rueda de ajustes) — al tocar stop, la app pide la
+   transcripción final sin guardarla (`captura-voz?modo=transcribir`), muestra título y texto editables y
+   recién con "Guardar en Notion" la manda en modo texto con `limpiar: false` (se guarda tal cual).
+5. **Respaldo** — si el audio falla, manda el texto en vivo a `captura-voz` en modo texto
    (`{"texto": "..."}`). Toda nota queda guardada en el iPhone (localStorage + IndexedDB) hasta que se guarda.
 
 Ambas funciones se autentican con el header `x-captura-key`; el código solo tiene su SHA-256.

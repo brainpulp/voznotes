@@ -38,9 +38,19 @@
       <p id="liveText" class="live-text"><span id="finalText"></span><span id="interimText" class="interim"></span></p>
     </section>
 
+    <section id="editor" class="editor" hidden>
+      <input id="editTitle" class="edit-title" type="text" placeholder="Título (vacío = lo propone Gemini)" autocomplete="off">
+      <textarea id="editText" class="edit-text" placeholder="Texto de la nota"></textarea>
+    </section>
+
     <p id="message" class="message" hidden></p>
 
-    <footer class="controls">
+    <footer id="editActions" class="edit-actions" hidden>
+      <button id="discardBtn" class="small-btn ghost">Descartar</button>
+      <button id="saveBtn" class="small-btn primary">Guardar en Notion</button>
+    </footer>
+
+    <footer id="controls" class="controls">
       <div id="meter" class="meter"><div id="meterBar"></div></div>
       <button id="recordBtn" class="record-btn" aria-label="Grabar">
         <span class="record-inner"></span>
@@ -55,6 +65,7 @@
       <p>Pegá tu clave de captura. Se guarda solo en este iPhone.</p>
       <input id="keyInput" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Clave de captura" required>
       <p id="keyError" class="key-error" hidden></p>
+      <label class="toggle"><input id="reviewToggle" type="checkbox"> Revisar y editar antes de guardar</label>
       <div class="dialog-actions">
         <button id="keyCancel" type="button" class="small-btn ghost">Cancelar</button>
         <button id="keySave" type="submit" class="small-btn primary">Guardar</button>

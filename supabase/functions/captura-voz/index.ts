@@ -6,6 +6,10 @@
 // - CORS + OPTIONS, para que el navegador pueda llamar a la función.
 // - Modo texto: POST con content-type application/json y {"texto": "..."}.
 //   Gemini limpia el texto y le pone título; si Gemini falla, se guarda el texto tal cual.
+//   Con "limpiar": false el texto se guarda exactamente como llega (nota editada a mano);
+//   "titulo" opcional: si falta, Gemini propone uno.
+// - Solo transcribir: POST de audio a ?modo=transcribir devuelve JSON {titulo, texto}
+//   sin crear la nota (la PWA lo muestra para editar antes de guardar).
 import { encodeBase64 } from "jsr:@std/encoding@1/base64";
 
 // SHA-256 de la clave de captura (la clave en sí no vive en el código).
@@ -35,6 +39,12 @@ Devolvé solo JSON: {"titulo": string, "texto": string}. El título resume la no
 Texto:
 `;
 
+const PROMPT_TITULO = `Proponé un título para esta nota personal: 8 palabras como máximo, en el idioma predominante del texto, sin comillas.
+Devolvé solo JSON: {"titulo": string}.
+
+Texto:
+`;
+
 const CORS = {
   "access-control-allow-origin": "*",
   "access-control-allow-methods": "POST, OPTIONS",
@@ -44,6 +54,10 @@ const CORS = {
 
 function text(msg: string, status = 200) {
   return new Response(msg, { status, headers: { ...CORS, "content-type": "text/plain; charset=utf-8" } });
+}
+
+function json(body: unknown, status = 200) {
+  return new Response(JSON.stringify(body), { status, headers: { ...CORS, "content-type": "application/json; charset=utf-8" } });
 }
 
 async function sha256Hex(s: string): Promise<string> {
@@ -123,17 +137,41 @@ async function crearNota(titulo: string, cuerpo: string, notionToken: string): P
   return text(`Guardada: ${titulo}`);
 }
 
-// Modo texto (PWA): {"texto": "..."} → Gemini pone título y limpia → Notion.
+async function proponerTitulo(cuerpo: string, geminiKey: string): Promise<string> {
+  const g = await gemini([{ text: PROMPT_TITULO + cuerpo.slice(0, 20_000) }], geminiKey);
+  if (g.ok) {
+    try {
+      const j = JSON.parse(g.raw);
+      const out = (j.candidates?.[0]?.content?.parts || []).map((p: { text?: string }) => p.text || "").join("");
+      const t = String(JSON.parse(out.replace(/```json|```/g, "").trim()).titulo || "").trim();
+      if (t) return t;
+    } catch (e) {
+      console.error("parse_error_titulo", (e as Error).message, g.raw.slice(0, 500));
+    }
+  } else {
+    console.error("gemini_error_titulo", g.status, g.raw.slice(0, 500));
+  }
+  return tituloDesdeTexto(cuerpo);
+}
+
+// Modo texto (PWA): {"texto": "...", "titulo"?: "...", "limpiar"?: false} → Notion.
 async function desdeTexto(req: Request, geminiKey: string, notionToken: string): Promise<Response> {
-  let original = "";
+  let original = "", tituloDado = "", limpiar = true;
   try {
     const body = await req.json();
     original = String(body?.texto ?? "").trim();
+    tituloDado = String(body?.titulo ?? "").trim();
+    limpiar = body?.limpiar !== false;
   } catch {
     return text("JSON inválido: mandá {\"texto\": \"...\"}.", 400);
   }
   if (!original) return text("El texto llegó vacío. No se creó la nota.", 422);
   if (original.length > MAX_TEXT) return text("El texto es demasiado largo para una nota.", 413);
+
+  // Nota revisada a mano: se guarda tal cual.
+  if (!limpiar) {
+    return crearNota(tituloDado || await proponerTitulo(original, geminiKey), original, notionToken);
+  }
 
   let titulo = "", cuerpo = "";
   const g = await gemini([{ text: PROMPT_TEXTO + original }], geminiKey);
@@ -148,6 +186,7 @@ async function desdeTexto(req: Request, geminiKey: string, notionToken: string):
   }
   // Si Gemini falla, la nota se guarda igual con el texto original.
   if (!cuerpo) cuerpo = original;
+  if (tituloDado) titulo = tituloDado;
   if (!titulo) titulo = tituloDesdeTexto(cuerpo);
   return crearNota(titulo, cuerpo, notionToken);
 }
@@ -204,6 +243,8 @@ Deno.serve(async (req) => {
   }
   if (!cuerpo) return text("No se detectó habla en el audio. No se creó la nota.", 422);
   if (!titulo) titulo = cuerpo.slice(0, 60);
+
+  if (new URL(req.url).searchParams.get("modo") === "transcribir") return json({ titulo, texto: cuerpo });
 
   return crearNota(titulo, cuerpo, notionToken);
 });

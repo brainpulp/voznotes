@@ -6,6 +6,7 @@ const SAVE_URL = `${FUNCTIONS}/captura-voz`;
 const KEY_STORE = "voznotes.key";
 const PENDING_STORE = "voznotes.pending"; // notas sin guardar (texto); el audio va a IndexedDB
 const DRAFT_STORE = "voznotes.draft"; // texto en vivo mientras se graba
+const REVIEW_STORE = "voznotes.review"; // revisar/editar antes de guardar (por defecto sí)
 const AUDIO_TIMEOUT_MS = 150_000;
 const TEXT_TIMEOUT_MS = 60_000;
 
@@ -18,10 +19,14 @@ const ui = {
   pending: $("pending"), pendingText: $("pendingText"), retryBtn: $("retryBtn"),
   settingsBtn: $("settingsBtn"), keyDialog: $("keyDialog"), keyForm: $("keyForm"),
   keyInput: $("keyInput"), keyError: $("keyError"), keyCancel: $("keyCancel"),
+  reviewToggle: $("reviewToggle"), controls: $("controls"),
+  editor: $("editor"), editTitle: $("editTitle"), editText: $("editText"),
+  editActions: $("editActions"), saveBtn: $("saveBtn"), discardBtn: $("discardBtn"),
 };
 
 let rec = null; // grabación en curso
 let busy = false; // guardando / reintentando
+let editing = null; // nota abierta en el editor
 
 // ---------- almacenamiento ----------
 
@@ -36,6 +41,11 @@ function lsDel(k) { try { localStorage.removeItem(k); } catch { /* nada */ } }
 const getKey = () => lsGet(KEY_STORE, "");
 const getPending = () => lsGet(PENDING_STORE, []);
 const setPending = (list) => (list.length ? lsSet(PENDING_STORE, list) : lsDel(PENDING_STORE));
+const reviewOn = () => lsGet(REVIEW_STORE, true) !== false;
+const needsReview = (n) => n.estado === "revisar";
+function updatePending(note) {
+  setPending(getPending().map((n) => (n.id === note.id ? note : n)));
+}
 
 function idb() {
   return new Promise((resolve, reject) => {
@@ -81,7 +91,7 @@ function renderTranscript(final, interim) {
 }
 
 function renderPending() {
-  const n = getPending().length;
+  const n = getPending().filter((x) => !needsReview(x)).length;
   ui.pending.hidden = n === 0;
   ui.pendingText.textContent = n === 1 ? "1 nota sin guardar" : `${n} notas sin guardar`;
   ui.retryBtn.disabled = busy || !!rec;
@@ -91,7 +101,9 @@ function setButton(mode) {
   ui.recordBtn.classList.toggle("recording", mode === "recording");
   ui.recordBtn.disabled = mode === "disabled";
   ui.recordBtn.setAttribute("aria-label", mode === "recording" ? "Detener y guardar" : "Grabar");
-  ui.hint.textContent = mode === "recording" ? "Tocá para detener y guardar" : mode === "disabled" ? "" : "Grabar";
+  ui.hint.textContent = mode === "recording"
+    ? (reviewOn() ? "Tocá para detener y revisar" : "Tocá para detener y guardar")
+    : mode === "disabled" ? "" : "Grabar";
 }
 
 function fmtTime(ms) {
@@ -105,6 +117,7 @@ function askKey(required) {
   ui.keyInput.value = getKey();
   ui.keyError.hidden = true;
   ui.keyCancel.hidden = required;
+  ui.reviewToggle.checked = reviewOn();
   ui.keyDialog.showModal();
   setTimeout(() => ui.keyInput.focus(), 50);
 }
@@ -126,6 +139,7 @@ ui.keyForm.addEventListener("submit", async (e) => {
   }
 });
 ui.keyCancel.addEventListener("click", () => ui.keyDialog.close());
+ui.reviewToggle.addEventListener("change", () => lsSet(REVIEW_STORE, ui.reviewToggle.checked));
 ui.keyDialog.addEventListener("cancel", (e) => { if (!getKey()) e.preventDefault(); });
 ui.settingsBtn.addEventListener("click", () => { if (!rec) askKey(false); });
 
@@ -144,11 +158,11 @@ async function fetchToken(key = getKey()) {
   return body;
 }
 
-async function postWithTimeout(body, contentType, ms) {
+async function postWithTimeout(body, contentType, ms, url = SAVE_URL) {
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), ms);
   try {
-    const r = await fetch(SAVE_URL, {
+    const r = await fetch(url, {
       method: "POST",
       headers: { "x-captura-key": getKey(), "content-type": contentType },
       body,
@@ -219,8 +233,8 @@ async function processNote(note, prefix = "") {
 
 async function retryPending() {
   if (busy || rec || !getKey()) return;
-  const list = getPending();
-  if (!list.length) return;
+  const list = getPending().filter((n) => !needsReview(n));
+  if (!list.length) return openNextReview();
   busy = true;
   renderPending();
   for (const note of list) {
@@ -228,7 +242,121 @@ async function retryPending() {
   }
   busy = false;
   renderPending();
+  openNextReview();
 }
+
+// ---------- revisar y editar antes de guardar ----------
+
+function showEditor(on) {
+  ui.editor.hidden = !on;
+  ui.editActions.hidden = !on;
+  ui.transcript.hidden = on;
+  ui.controls.hidden = on;
+}
+
+function setEditorBusy(b) {
+  ui.saveBtn.disabled = b;
+  ui.discardBtn.disabled = b;
+  ui.editTitle.disabled = b;
+  ui.editText.disabled = b;
+}
+
+// Transcripción final desde el audio, sin crear la nota todavía.
+async function transcribeOnly(note) {
+  const blob = note.hasAudio ? await audioGet(note.id) : null;
+  if (!blob || blob.size <= 1000) return null;
+  const r = await postWithTimeout(blob, blob.type || "audio/mp4", AUDIO_TIMEOUT_MS, `${SAVE_URL}?modo=transcribir`);
+  if (r.ok) {
+    try { const j = JSON.parse(r.text); return { titulo: j.titulo || "", texto: j.texto || "" }; } catch { /* sigue */ }
+  }
+  return { error: r.status === 422 ? "No se detectó habla en el audio." : r.text };
+}
+
+async function openEditor(note, prefix = "") {
+  editing = note;
+  showEditor(true);
+  showMessage(prefix.trim());
+  ui.editTitle.value = note.edit?.titulo || "";
+  ui.editText.value = note.edit?.texto || note.texto || "";
+  if (!note.edit) {
+    setEditorBusy(true);
+    setState("saving", "Transcribiendo…");
+    const res = await transcribeOnly(note);
+    if (editing !== note) return;
+    if (res && !res.error && res.texto) {
+      note.edit = { titulo: res.titulo, texto: res.texto };
+      showMessage(prefix.trim());
+    } else {
+      note.edit = { titulo: "", texto: note.texto || "" };
+      const why = res?.error ? ` (${res.error})` : "";
+      showMessage(`${prefix}No pude hacer la transcripción final${why}. Te dejo el texto en vivo para editar.`, "err");
+    }
+    updatePending(note);
+    ui.editTitle.value = note.edit.titulo;
+    ui.editText.value = note.edit.texto;
+    setEditorBusy(false);
+  }
+  setState("idle", "Revisá y guardá");
+}
+
+function closeEditor() {
+  editing = null;
+  showEditor(false);
+  setEditorBusy(false);
+  renderPending();
+}
+
+function openNextReview() {
+  if (editing || rec || busy) return;
+  const next = getPending().find(needsReview);
+  if (next) openEditor(next);
+}
+
+function onEdit() {
+  if (!editing) return;
+  editing.edit = { titulo: ui.editTitle.value, texto: ui.editText.value };
+  updatePending(editing);
+}
+ui.editTitle.addEventListener("input", onEdit);
+ui.editText.addEventListener("input", onEdit);
+
+ui.saveBtn.addEventListener("click", async () => {
+  const note = editing;
+  if (!note) return;
+  onEdit();
+  const texto = ui.editText.value.trim();
+  if (!texto) return showMessage("La nota está vacía. Escribí algo o tocá Descartar.", "err");
+  setEditorBusy(true);
+  setState("saving", "Guardando en Notion…");
+  showMessage("");
+  const r = await postWithTimeout(
+    JSON.stringify({ titulo: ui.editTitle.value.trim(), texto, limpiar: false }), "application/json", TEXT_TIMEOUT_MS);
+  setEditorBusy(false);
+  if (r.ok) {
+    dropPending(note.id);
+    closeEditor();
+    const title = savedTitle(r.text);
+    renderTranscript("", "");
+    setState("saved", `Guardada: ${title}`);
+    showMessage(`Guardada: ${title}`, "ok");
+    openNextReview();
+  } else {
+    setState("error", "No se guardó");
+    showMessage(`${r.text} La nota sigue en este iPhone; probá Guardar de nuevo.`, "err");
+    if (r.status === 401) askKey(false);
+  }
+});
+
+ui.discardBtn.addEventListener("click", () => {
+  const note = editing;
+  if (!note || !confirm("¿Descartar esta nota? No se va a guardar en Notion.")) return;
+  dropPending(note.id);
+  closeEditor();
+  renderTranscript("", "");
+  setState("idle", "Listo");
+  showMessage("Nota descartada.");
+  openNextReview();
+});
 
 ui.retryBtn.addEventListener("click", retryPending);
 window.addEventListener("online", retryPending);
@@ -330,7 +458,7 @@ async function startRecording() {
   }
 
   // Si el micrófono se corta (llamada, Siri, otra app), guardamos lo que haya.
-  for (const tr of stream.getAudioTracks()) tr.addEventListener("ended", () => stopRecording("El micrófono se cortó; guardé lo grabado."));
+  for (const tr of stream.getAudioTracks()) tr.addEventListener("ended", () => stopRecording("El micrófono se cortó; corté la grabación ahí."));
 
   try { r.wakeLock = await navigator.wakeLock?.request("screen"); } catch { /* opcional */ }
 
@@ -377,7 +505,8 @@ async function stopRecording(reason) {
   cleanup(r);
 
   const blob = r.chunks.length ? new Blob(r.chunks, { type: r.chunks[0].type || r.recorder?.mimeType || "audio/mp4" }) : null;
-  const note = { id: r.id, texto, createdAt: r.startedAt, hasAudio: !!blob };
+  const review = reviewOn();
+  const note = { id: r.id, texto, createdAt: r.startedAt, hasAudio: !!blob, ...(review ? { estado: "revisar" } : {}) };
   // Primero queda guardada en el iPhone; recién después se manda.
   setPending([...getPending().filter((n) => n.id !== note.id), note]);
   if (blob) await audioPut(note.id, blob);
@@ -385,6 +514,11 @@ async function stopRecording(reason) {
   rec = null;
   renderTranscript(texto, "");
   setButton("idle");
+
+  if (review) {
+    await openEditor(note, reason ? `${reason} ` : "");
+    return;
+  }
 
   busy = true;
   renderPending();
@@ -403,7 +537,9 @@ ui.recordBtn.addEventListener("click", () => {
 // cortamos y guardamos lo grabado hasta ese momento.
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "hidden" && rec) {
-    stopRecording("La app pasó a segundo plano; guardé lo grabado hasta ahí.");
+    stopRecording(reviewOn()
+      ? "La app pasó a segundo plano; corté la grabación ahí."
+      : "La app pasó a segundo plano; guardé lo grabado hasta ahí.");
   } else if (document.visibilityState === "visible" && !rec) {
     retryPending();
   }
@@ -418,7 +554,7 @@ function recoverDraft() {
   // Si la app se cerró en medio de una grabación, el texto en vivo quedó en el borrador.
   const d = lsGet(DRAFT_STORE);
   if (d && d.texto && !getPending().some((n) => n.id === d.id)) {
-    setPending([...getPending(), { id: d.id, texto: d.texto, createdAt: d.createdAt, hasAudio: false }]);
+    setPending([...getPending(), { id: d.id, texto: d.texto, createdAt: d.createdAt, hasAudio: false, ...(reviewOn() ? { estado: "revisar" } : {}) }]);
   }
   lsDel(DRAFT_STORE);
 }
