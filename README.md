@@ -19,14 +19,14 @@ La app pide la clave la primera vez y la guarda en el iPhone.
 
 ## Archivos
 
-- `web/` — la app (HTML/CSS/JS sin build). Se publica en Netlify (`netlify.toml`).
+- `web/` — la app (HTML/CSS/JS sin build). Se publica en GitHub Pages (`.github/workflows/pages.yml`).
 - `supabase/functions/captura-voz/` — función existente del Atajo, con agregados: CORS y modo texto.
 - `supabase/functions/captura-voz-token/` — función nueva que emite el token efímero.
 
 ## Deploy
 
 - Funciones: se despliegan en el proyecto Supabase `ikztpvxfgmhmrcwolwgx` con `verify_jwt = false`.
-- Web: carpeta `web/` en Netlify.
+- Web: cada push que toca `web/` publica la carpeta en GitHub Pages: https://brainpulp.github.io/voznotes/
 
 Para cambiar la clave de captura: calcular `printf '%s' 'NUEVA_CLAVE' | sha256sum`, reemplazar
 `CAPTURE_KEY_SHA256` en las dos funciones, desplegarlas, y actualizar el Atajo y la app (ícono de engranaje).
