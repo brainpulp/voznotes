@@ -176,3 +176,20 @@ html, body {
 .toggle { display: flex; align-items: center; gap: 10px; margin-top: 16px; color: var(--text); font-size: 16px; }
 .toggle input { width: 22px; height: 22px; accent-color: var(--red); }
 .edit-actions #saveBtn { flex: 2; }
+
+a.icon-btn { text-decoration: none; }
+.tag-group { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.tag-label { color: var(--muted); font-size: 14px; width: 38px; flex: none; }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; min-width: 0; flex: 1; }
+.chips.scroll { flex-wrap: nowrap; overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: none; padding-bottom: 2px; }
+.chips.scroll::-webkit-scrollbar { display: none; }
+.chip {
+  flex: none;
+  min-height: 38px; padding: 0 14px;
+  border-radius: 19px; border: 1px solid var(--border);
+  background: transparent; color: var(--muted);
+  font: inherit; font-size: 15px; font-weight: 600;
+}
+.chip[aria-pressed="true"] { background: #3a1d1b; border-color: var(--red); color: #fff; }
+.chip:disabled { opacity: .5; }
+#messageLink { color: #9fc8ff; font-weight: 600; white-space: nowrap; }

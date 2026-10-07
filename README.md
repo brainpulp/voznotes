@@ -14,6 +14,8 @@ PWA para iPhone: grabás una nota de voz, ves la transcripción en vivo y al toc
 4. **Revisar y editar** (por defecto, se apaga en la rueda de ajustes) — al tocar stop, la app pide la
    transcripción final sin guardarla (`captura-voz?modo=transcribir`), muestra título y texto editables y
    recién con "Guardar en Notion" la manda en modo texto con `limpiar: false` (se guarda tal cual).
+   En el editor se eligen los tags ("more tags" y "type"); las opciones se leen de Notion
+   (`captura-voz?modo=opciones`). Por defecto: nota / ADMIN.
 5. **Respaldo** — si el audio falla, manda el texto en vivo a `captura-voz` en modo texto
    (`{"texto": "..."}`). Toda nota queda guardada en el iPhone (localStorage + IndexedDB) hasta que se guarda.
 
@@ -23,7 +25,8 @@ La app pide la clave la primera vez y la guarda en el iPhone.
 ## Archivos
 
 - `web/` — la app (HTML/CSS/JS sin build). Se publica en GitHub Pages (`.github/workflows/pages.yml`).
-- `supabase/functions/captura-voz/` — función existente del Atajo, con agregados: CORS y modo texto.
+- `supabase/functions/captura-voz/` — función existente del Atajo, con agregados: CORS, modo texto,
+  solo transcribir, tags y la URL de la nota creada (header `x-nota-url`).
 - `supabase/functions/captura-voz-token/` — función nueva que emite el token efímero.
 
 ## Deploy

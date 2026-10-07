@@ -7,6 +7,8 @@ const KEY_STORE = "voznotes.key";
 const PENDING_STORE = "voznotes.pending"; // notas sin guardar (texto); el audio va a IndexedDB
 const DRAFT_STORE = "voznotes.draft"; // texto en vivo mientras se graba
 const REVIEW_STORE = "voznotes.review"; // revisar/editar antes de guardar (por defecto sí)
+const OPTIONS_STORE = "voznotes.options"; // opciones de tags leídas de Notion
+const DEFAULT_TAGS = { type: ["nota"], moreTags: ["ADMIN"] };
 const AUDIO_TIMEOUT_MS = 150_000;
 const TEXT_TIMEOUT_MS = 60_000;
 
@@ -22,6 +24,8 @@ const ui = {
   reviewToggle: $("reviewToggle"), controls: $("controls"),
   editor: $("editor"), editTitle: $("editTitle"), editText: $("editText"),
   editActions: $("editActions"), saveBtn: $("saveBtn"), discardBtn: $("discardBtn"),
+  messageText: $("messageText"), messageLink: $("messageLink"),
+  typeChips: $("typeChips"), moreTagsChips: $("moreTagsChips"),
 };
 
 let rec = null; // grabación en curso
@@ -77,9 +81,11 @@ function setState(state, text) {
   ui.statusText.textContent = text;
 }
 
-function showMessage(text, kind) {
+function showMessage(text, kind, link) {
   ui.message.hidden = !text;
-  ui.message.textContent = text || "";
+  ui.messageText.textContent = text || "";
+  ui.messageLink.hidden = !link;
+  if (link) ui.messageLink.href = link;
   ui.message.className = "message" + (kind ? " " + kind : "");
 }
 
@@ -131,6 +137,7 @@ ui.keyForm.addEventListener("submit", async (e) => {
     await fetchToken(key); // valida la clave contra el servidor
     lsSet(KEY_STORE, key);
     ui.keyDialog.close();
+    loadOptions();
     setState("idle", "Listo");
     retryPending();
   } catch (err) {
@@ -168,7 +175,7 @@ async function postWithTimeout(body, contentType, ms, url = SAVE_URL) {
       body,
       signal: ctrl.signal,
     });
-    return { ok: r.ok, status: r.status, text: (await r.text()).trim() };
+    return { ok: r.ok, status: r.status, url: r.headers.get("x-nota-url") || "", text: (await r.text()).trim() };
   } catch (e) {
     return { ok: false, status: 0, text: e.name === "AbortError" ? "Se agotó el tiempo de espera." : "Sin conexión con el servidor." };
   } finally {
@@ -183,14 +190,14 @@ async function saveNote(note) {
   let audioRes = null;
   if (blob && blob.size > 1000) {
     audioRes = await postWithTimeout(blob, blob.type || "audio/mp4", AUDIO_TIMEOUT_MS);
-    if (audioRes.ok) return { ok: true, msg: audioRes.text, via: "audio" };
+    if (audioRes.ok) return { ok: true, msg: audioRes.text, url: audioRes.url, via: "audio" };
     if (audioRes.status === 401) return { ok: false, msg: "Clave de captura inválida.", fatal: true };
     // 422 = el audio no tiene habla: si tampoco hay texto en vivo, no hay nota.
     if (audioRes.status === 422 && !note.texto) return { ok: true, msg: audioRes.text, empty: true };
   }
   if (note.texto) {
     const t = await postWithTimeout(JSON.stringify({ texto: note.texto }), "application/json", TEXT_TIMEOUT_MS);
-    if (t.ok) return { ok: true, msg: t.text, via: "texto" };
+    if (t.ok) return { ok: true, msg: t.text, url: t.url, via: "texto" };
     if (t.status === 401) return { ok: false, msg: "Clave de captura inválida.", fatal: true };
     return { ok: false, msg: (audioRes ? audioRes.text + " / " : "") + t.text };
   }
@@ -220,7 +227,7 @@ async function processNote(note, prefix = "") {
     } else {
       const title = savedTitle(res.msg);
       setState("saved", `Guardada: ${title}`);
-      showMessage(`${prefix}${res.via === "texto" ? "Guardada (desde el texto en vivo)" : "Guardada"}: ${title}`, "ok");
+      showMessage(`${prefix}${res.via === "texto" ? "Guardada (desde el texto en vivo)" : "Guardada"}: ${title}`, "ok", res.url);
     }
     return true;
   }
@@ -259,6 +266,7 @@ function setEditorBusy(b) {
   ui.discardBtn.disabled = b;
   ui.editTitle.disabled = b;
   ui.editText.disabled = b;
+  for (const c of document.querySelectorAll(".chip")) c.disabled = b;
 }
 
 // Transcripción final desde el audio, sin crear la nota todavía.
@@ -272,22 +280,86 @@ async function transcribeOnly(note) {
   return { error: r.status === 422 ? "No se detectó habla en el audio." : r.text };
 }
 
+// ---------- tags ----------
+
+function getOptions() {
+  const o = lsGet(OPTIONS_STORE, null);
+  return {
+    type: o?.type?.length ? o.type : ["nota", "idea", "task"],
+    moreTags: o?.moreTags?.length ? o.moreTags : ["RELEER", "CLAVE", "ADMIN", "ACCIÓN"],
+  };
+}
+
+async function loadOptions() {
+  if (!getKey()) return;
+  const r = await postWithTimeout("{}", "application/json", 20_000, `${SAVE_URL}?modo=opciones`);
+  if (!r.ok) return;
+  try {
+    const j = JSON.parse(r.text);
+    if (Array.isArray(j.type) && Array.isArray(j.moreTags)) {
+      lsSet(OPTIONS_STORE, { type: j.type, moreTags: j.moreTags });
+      if (editing) renderChips();
+    }
+  } catch { /* se usan las opciones guardadas */ }
+}
+
+function noteTags(note) {
+  return {
+    type: note.edit?.type || [...DEFAULT_TAGS.type],
+    moreTags: note.edit?.moreTags || [...DEFAULT_TAGS.moreTags],
+  };
+}
+
+function renderChipGroup(container, options, selected, key) {
+  container.replaceChildren();
+  // Primero las elegidas, para que se vean sin desplazar.
+  const all = [...selected.filter((x) => !options.includes(x)), ...options];
+  all.sort((a, b) => (selected.includes(b) ? 1 : 0) - (selected.includes(a) ? 1 : 0));
+  for (const name of all) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "chip";
+    b.textContent = name;
+    b.setAttribute("aria-pressed", String(selected.includes(name)));
+    b.addEventListener("click", () => {
+      if (!editing) return;
+      const tags = noteTags(editing);
+      const list = tags[key];
+      const i = list.indexOf(name);
+      if (i >= 0) list.splice(i, 1); else list.push(name);
+      b.setAttribute("aria-pressed", String(i < 0));
+      editing.edit = { ...editing.edit, ...tags };
+      updatePending(editing);
+    });
+    container.append(b);
+  }
+}
+
+function renderChips() {
+  if (!editing) return;
+  const opts = getOptions();
+  const tags = noteTags(editing);
+  renderChipGroup(ui.moreTagsChips, opts.moreTags, tags.moreTags, "moreTags");
+  renderChipGroup(ui.typeChips, opts.type, tags.type, "type");
+}
+
 async function openEditor(note, prefix = "") {
   editing = note;
   showEditor(true);
   showMessage(prefix.trim());
   ui.editTitle.value = note.edit?.titulo || "";
   ui.editText.value = note.edit?.texto || note.texto || "";
+  renderChips();
   if (!note.edit) {
     setEditorBusy(true);
     setState("saving", "Transcribiendo…");
     const res = await transcribeOnly(note);
     if (editing !== note) return;
     if (res && !res.error && res.texto) {
-      note.edit = { titulo: res.titulo, texto: res.texto };
+      note.edit = { ...noteTags(note), titulo: res.titulo, texto: res.texto };
       showMessage(prefix.trim());
     } else {
-      note.edit = { titulo: "", texto: note.texto || "" };
+      note.edit = { ...noteTags(note), titulo: "", texto: note.texto || "" };
       const why = res?.error ? ` (${res.error})` : "";
       showMessage(`${prefix}No pude hacer la transcripción final${why}. Te dejo el texto en vivo para editar.`, "err");
     }
@@ -314,7 +386,7 @@ function openNextReview() {
 
 function onEdit() {
   if (!editing) return;
-  editing.edit = { titulo: ui.editTitle.value, texto: ui.editText.value };
+  editing.edit = { ...noteTags(editing), titulo: ui.editTitle.value, texto: ui.editText.value };
   updatePending(editing);
 }
 ui.editTitle.addEventListener("input", onEdit);
@@ -329,8 +401,10 @@ ui.saveBtn.addEventListener("click", async () => {
   setEditorBusy(true);
   setState("saving", "Guardando en Notion…");
   showMessage("");
+  const tags = noteTags(note);
   const r = await postWithTimeout(
-    JSON.stringify({ titulo: ui.editTitle.value.trim(), texto, limpiar: false }), "application/json", TEXT_TIMEOUT_MS);
+    JSON.stringify({ titulo: ui.editTitle.value.trim(), texto, limpiar: false, type: tags.type, more_tags: tags.moreTags }),
+    "application/json", TEXT_TIMEOUT_MS);
   setEditorBusy(false);
   if (r.ok) {
     dropPending(note.id);
@@ -338,7 +412,7 @@ ui.saveBtn.addEventListener("click", async () => {
     const title = savedTitle(r.text);
     renderTranscript("", "");
     setState("saved", `Guardada: ${title}`);
-    showMessage(`Guardada: ${title}`, "ok");
+    showMessage(`Guardada: ${title}`, "ok", r.url);
     openNextReview();
   } else {
     setState("error", "No se guardó");
@@ -573,5 +647,6 @@ if (!navigator.mediaDevices?.getUserMedia) {
 } else if (!getKey()) {
   askKey(true);
 } else {
+  loadOptions();
   retryPending();
 }

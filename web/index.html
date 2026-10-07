@@ -23,7 +23,10 @@
         <span class="dot"></span><span id="statusText">Listo</span>
       </div>
       <span id="timer" class="timer" hidden>0:00</span>
-      <button id="settingsBtn" class="icon-btn" aria-label="Cambiar clave">
+      <a id="notionBtn" class="icon-btn" href="https://www.notion.so/43fde4d9aab046c38cd57b218df4e7e4" target="_blank" rel="noopener" aria-label="Ver las notas en Notion">
+        <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h12l4 4v12H4z"/><path d="M8 9h8M8 13h8M8 17h5"/></svg>
+      </a>
+      <button id="settingsBtn" class="icon-btn" aria-label="Ajustes">
         <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
       </button>
     </header>
@@ -40,10 +43,18 @@
 
     <section id="editor" class="editor" hidden>
       <input id="editTitle" class="edit-title" type="text" placeholder="Título (vacío = lo propone Gemini)" autocomplete="off">
+      <div class="tag-group">
+        <span class="tag-label">Tags</span>
+        <div id="moreTagsChips" class="chips"></div>
+      </div>
+      <div class="tag-group">
+        <span class="tag-label">Tipo</span>
+        <div id="typeChips" class="chips scroll"></div>
+      </div>
       <textarea id="editText" class="edit-text" placeholder="Texto de la nota"></textarea>
     </section>
 
-    <p id="message" class="message" hidden></p>
+    <p id="message" class="message" hidden><span id="messageText"></span> <a id="messageLink" target="_blank" rel="noopener" hidden>Abrir en Notion</a></p>
 
     <footer id="editActions" class="edit-actions" hidden>
       <button id="discardBtn" class="small-btn ghost">Descartar</button>

@@ -10,6 +10,9 @@
 //   "titulo" opcional: si falta, Gemini propone uno.
 // - Solo transcribir: POST de audio a ?modo=transcribir devuelve JSON {titulo, texto}
 //   sin crear la nota (la PWA lo muestra para editar antes de guardar).
+// - Tags: el modo texto acepta "type" y "more_tags" (listas); si faltan, nota / ADMIN.
+// - Opciones: POST a ?modo=opciones devuelve las opciones actuales de "type" y "more tags".
+// - Las notas creadas devuelven su URL de Notion en el header x-nota-url.
 import { encodeBase64 } from "jsr:@std/encoding@1/base64";
 
 // SHA-256 de la clave de captura (la clave en sí no vive en el código).
@@ -49,8 +52,18 @@ const CORS = {
   "access-control-allow-origin": "*",
   "access-control-allow-methods": "POST, OPTIONS",
   "access-control-allow-headers": "x-captura-key, content-type",
+  "access-control-expose-headers": "x-nota-url",
   "access-control-max-age": "86400",
 };
+
+type Tags = { type: string[]; moreTags: string[] };
+const TAGS_DEFAULT: Tags = { type: ["nota"], moreTags: ["ADMIN"] };
+
+function listaTags(v: unknown, fallback: string[]): string[] {
+  if (!Array.isArray(v)) return fallback;
+  const out = [...new Set(v.map((x) => String(x).trim().replace(/,/g, " ")).filter((x) => x && x.length <= 100))];
+  return out.slice(0, 20);
+}
 
 function text(msg: string, status = 200) {
   return new Response(msg, { status, headers: { ...CORS, "content-type": "text/plain; charset=utf-8" } });
@@ -110,13 +123,13 @@ function tituloDesdeTexto(s: string): string {
   return words.length > 60 ? words.slice(0, 60) : words;
 }
 
-async function crearNota(titulo: string, cuerpo: string, notionToken: string): Promise<Response> {
+async function crearNota(titulo: string, cuerpo: string, notionToken: string, tags: Tags = TAGS_DEFAULT): Promise<Response> {
   const page = {
     parent: { type: "data_source_id", data_source_id: DATA_SOURCE_ID },
     properties: {
       name: { title: [{ text: { content: titulo.slice(0, 200) } }] },
-      type: { multi_select: [{ name: "nota" }] },
-      "more tags": { multi_select: [{ name: "ADMIN" }] },
+      type: { multi_select: tags.type.map((name) => ({ name })) },
+      "more tags": { multi_select: tags.moreTags.map((name) => ({ name })) },
     },
     children: chunks(cuerpo).map((c) => ({
       object: "block",
@@ -134,7 +147,27 @@ async function crearNota(titulo: string, cuerpo: string, notionToken: string): P
     console.error("notion_error", n.status, raw.slice(0, 1500));
     return text(`Notion rechazó la nota (${n.status}). Transcripción: ${cuerpo}`, 502);
   }
-  return text(`Guardada: ${titulo}`);
+  const res = text(`Guardada: ${titulo}`);
+  try {
+    const url = String((await n.json()).url || "");
+    if (url) res.headers.set("x-nota-url", url);
+  } catch { /* sin URL, no pasa nada */ }
+  return res;
+}
+
+// Opciones actuales de los tags en Notion, para que la PWA las muestre.
+async function opciones(notionToken: string): Promise<Response> {
+  const r = await fetch(`https://api.notion.com/v1/data_sources/${DATA_SOURCE_ID}`, {
+    headers: { "Authorization": `Bearer ${notionToken}`, "Notion-Version": NOTION_VERSION },
+  });
+  if (!r.ok) {
+    console.error("notion_opciones", r.status, (await r.text()).slice(0, 500));
+    return json({ error: `Notion no devolvió las opciones (${r.status}).` }, 502);
+  }
+  const props = (await r.json()).properties || {};
+  const nombres = (p: { multi_select?: { options?: { name: string }[] } } | undefined) =>
+    (p?.multi_select?.options || []).map((o) => o.name);
+  return json({ type: nombres(props["type"]), moreTags: nombres(props["more tags"]) });
 }
 
 async function proponerTitulo(cuerpo: string, geminiKey: string): Promise<string> {
@@ -157,11 +190,13 @@ async function proponerTitulo(cuerpo: string, geminiKey: string): Promise<string
 // Modo texto (PWA): {"texto": "...", "titulo"?: "...", "limpiar"?: false} → Notion.
 async function desdeTexto(req: Request, geminiKey: string, notionToken: string): Promise<Response> {
   let original = "", tituloDado = "", limpiar = true;
+  let tags = TAGS_DEFAULT;
   try {
     const body = await req.json();
     original = String(body?.texto ?? "").trim();
     tituloDado = String(body?.titulo ?? "").trim();
     limpiar = body?.limpiar !== false;
+    tags = { type: listaTags(body?.type, TAGS_DEFAULT.type), moreTags: listaTags(body?.more_tags, TAGS_DEFAULT.moreTags) };
   } catch {
     return text("JSON inválido: mandá {\"texto\": \"...\"}.", 400);
   }
@@ -170,7 +205,7 @@ async function desdeTexto(req: Request, geminiKey: string, notionToken: string):
 
   // Nota revisada a mano: se guarda tal cual.
   if (!limpiar) {
-    return crearNota(tituloDado || await proponerTitulo(original, geminiKey), original, notionToken);
+    return crearNota(tituloDado || await proponerTitulo(original, geminiKey), original, notionToken, tags);
   }
 
   let titulo = "", cuerpo = "";
@@ -188,7 +223,7 @@ async function desdeTexto(req: Request, geminiKey: string, notionToken: string):
   if (!cuerpo) cuerpo = original;
   if (tituloDado) titulo = tituloDado;
   if (!titulo) titulo = tituloDesdeTexto(cuerpo);
-  return crearNota(titulo, cuerpo, notionToken);
+  return crearNota(titulo, cuerpo, notionToken, tags);
 }
 
 Deno.serve(async (req) => {
@@ -199,6 +234,8 @@ Deno.serve(async (req) => {
   const geminiKey = Deno.env.get("GEMINI_API_KEY");
   const notionToken = Deno.env.get("NOTION_TOKEN");
   if (!geminiKey || !notionToken) return text("Faltan GEMINI_API_KEY o NOTION_TOKEN en los secretos de Supabase.", 500);
+
+  if (new URL(req.url).searchParams.get("modo") === "opciones") return opciones(notionToken);
 
   const ct = req.headers.get("content-type") || "";
   if (ct.toLowerCase().startsWith("application/json")) return desdeTexto(req, geminiKey, notionToken);
