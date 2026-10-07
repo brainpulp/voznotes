@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+  <title>Voznotes</title>
+  <meta name="description" content="Notas de voz en vivo a Notion">
+  <meta name="theme-color" content="#0b0b0d">
+  <meta name="color-scheme" content="dark">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Voznotes">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon-192.png" type="image/png">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main id="app">
+    <header class="top">
+      <div id="status" class="status" data-state="idle">
+        <span class="dot"></span><span id="statusText">Listo</span>
+      </div>
+      <span id="timer" class="timer" hidden>0:00</span>
+      <button id="settingsBtn" class="icon-btn" aria-label="Cambiar clave">
+        <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+      </button>
+    </header>
+
+    <div id="pending" class="pending" hidden>
+      <span id="pendingText"></span>
+      <button id="retryBtn" class="small-btn">Reintentar</button>
+    </div>
+
+    <section id="transcript" class="transcript" aria-live="polite">
+      <p id="placeholder" class="placeholder">Tocá el botón y hablá.<br>El texto aparece acá mientras hablás.</p>
+      <p id="liveText" class="live-text"><span id="finalText"></span><span id="interimText" class="interim"></span></p>
+    </section>
+
+    <p id="message" class="message" hidden></p>
+
+    <footer class="controls">
+      <div id="meter" class="meter"><div id="meterBar"></div></div>
+      <button id="recordBtn" class="record-btn" aria-label="Grabar">
+        <span class="record-inner"></span>
+      </button>
+      <p id="hint" class="hint">Grabar</p>
+    </footer>
+  </main>
+
+  <dialog id="keyDialog" class="key-dialog">
+    <form id="keyForm" method="dialog">
+      <h1>Voznotes</h1>
+      <p>Pegá tu clave de captura. Se guarda solo en este iPhone.</p>
+      <input id="keyInput" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Clave de captura" required>
+      <p id="keyError" class="key-error" hidden></p>
+      <div class="dialog-actions">
+        <button id="keyCancel" type="button" class="small-btn ghost">Cancelar</button>
+        <button id="keySave" type="submit" class="small-btn primary">Guardar</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="app.js" type="module"></script>
+</body>
+</html>
