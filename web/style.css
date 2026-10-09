@@ -214,3 +214,9 @@ a.icon-btn { text-decoration: none; }
 .recent-title { font-size: 17px; font-weight: 600; }
 .recent-meta { color: var(--muted); font-size: 14px; margin-top: 2px; }
 .editor > .chips { flex: none; }
+
+/* Solo desplazamiento vertical: nada se arrastra hacia los costados. */
+html, body, #app { overflow-x: hidden; max-width: 100%; }
+.recent, .recent-list, .transcript { overflow-x: hidden; touch-action: pan-y; overscroll-behavior: contain; min-width: 0; }
+.recent-list li, .recent-list a { min-width: 0; max-width: 100%; }
+.recent-title, .recent-meta { overflow-wrap: anywhere; }
