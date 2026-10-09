@@ -9,6 +9,8 @@ const DRAFT_STORE = "voznotes.draft"; // texto en vivo mientras se graba
 const REVIEW_STORE = "voznotes.review"; // revisar/editar antes de guardar (por defecto sí)
 const OPTIONS_STORE = "voznotes.options"; // opciones de tags leídas de Notion
 const DEFAULT_TAGS = { type: ["nota"], moreTags: ["ADMIN"] };
+const TAREA_TAG = "tarea"; // tag especial: la nota va a la base TAREAS con fecha de hoy
+const HOY_URL = "https://www.notion.so/2417579326218009a5d6eb4291e12655?v=29675793262180729e4c000c0a1877f5";
 const AUDIO_TIMEOUT_MS = 150_000;
 const TEXT_TIMEOUT_MS = 60_000;
 
@@ -25,7 +27,9 @@ const ui = {
   editor: $("editor"), editTitle: $("editTitle"), editText: $("editText"),
   editActions: $("editActions"), saveBtn: $("saveBtn"), discardBtn: $("discardBtn"),
   messageText: $("messageText"), messageLink: $("messageLink"),
-  typeChips: $("typeChips"), moreTagsChips: $("moreTagsChips"),
+  moreTagsChips: $("moreTagsChips"), tareaHint: $("tareaHint"),
+  recentBtn: $("recentBtn"), recent: $("recent"), recentClose: $("recentClose"),
+  recentList: $("recentList"), recentStatus: $("recentStatus"),
 };
 
 let rec = null; // grabación en curso
@@ -81,10 +85,11 @@ function setState(state, text) {
   ui.statusText.textContent = text;
 }
 
-function showMessage(text, kind, link) {
+function showMessage(text, kind, link, linkText = "Abrir en Notion") {
   ui.message.hidden = !text;
   ui.messageText.textContent = text || "";
   ui.messageLink.hidden = !link;
+  ui.messageLink.textContent = linkText;
   if (link) ui.messageLink.href = link;
   ui.message.className = "message" + (kind ? " " + kind : "");
 }
@@ -212,7 +217,7 @@ function dropPending(id) {
 }
 
 function savedTitle(msg) {
-  return msg.replace(/^Guardada:\s*/, "");
+  return msg.replace(/^(Guardada|Tarea para hoy):\s*/, "");
 }
 
 async function processNote(note, prefix = "") {
@@ -255,6 +260,7 @@ async function retryPending() {
 // ---------- revisar y editar antes de guardar ----------
 
 function showEditor(on) {
+  if (on) ui.recent.hidden = true;
   ui.editor.hidden = !on;
   ui.editActions.hidden = !on;
   ui.transcript.hidden = on;
@@ -280,12 +286,74 @@ async function transcribeOnly(note) {
   return { error: r.status === 422 ? "No se detectó habla en el audio." : r.text };
 }
 
+// ---------- recientes ----------
+
+function fmtFecha(iso) {
+  const d = new Date(iso);
+  const hoy = new Date();
+  const ayer = new Date(Date.now() - 86_400_000);
+  const hora = d.toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit", hour12: false });
+  if (d.toDateString() === hoy.toDateString()) return `hoy ${hora}`;
+  if (d.toDateString() === ayer.toDateString()) return `ayer ${hora}`;
+  return d.toLocaleDateString("es-AR", { day: "numeric", month: "short" }) + ` ${hora}`;
+}
+
+function renderRecent(notas) {
+  ui.recentList.replaceChildren();
+  for (const n of notas) {
+    const li = document.createElement("li");
+    const a = document.createElement("a");
+    a.href = n.url;
+    a.target = "_blank";
+    a.rel = "noopener";
+    const t = document.createElement("div");
+    t.className = "recent-title";
+    t.textContent = n.titulo;
+    const m = document.createElement("div");
+    m.className = "recent-meta";
+    m.textContent = [fmtFecha(n.creada), ...(n.tags || [])].join(" · ");
+    a.append(t, m);
+    li.append(a);
+    ui.recentList.append(li);
+  }
+}
+
+async function openRecent() {
+  if (rec || editing) return;
+  ui.recent.hidden = false;
+  ui.transcript.hidden = true;
+  ui.controls.hidden = true;
+  showMessage("");
+  const cached = lsGet("voznotes.recent", null);
+  if (cached) renderRecent(cached);
+  ui.recentStatus.textContent = cached ? "Actualizando…" : "Cargando…";
+  const r = await postWithTimeout("{}", "application/json", 20_000, `${SAVE_URL}?modo=recientes`);
+  if (ui.recent.hidden) return;
+  try {
+    const j = JSON.parse(r.text);
+    if (!r.ok || !Array.isArray(j.notas)) throw new Error(j.error || r.text);
+    lsSet("voznotes.recent", j.notas);
+    renderRecent(j.notas);
+    ui.recentStatus.textContent = j.notas.length ? "" : "Todavía no hay notas.";
+  } catch (e) {
+    ui.recentStatus.textContent = `No pude cargar las notas (${r.status ? e.message : "sin conexión"}).`;
+  }
+}
+
+function closeRecent() {
+  ui.recent.hidden = true;
+  ui.transcript.hidden = false;
+  ui.controls.hidden = false;
+}
+
+ui.recentBtn.addEventListener("click", () => (ui.recent.hidden ? openRecent() : closeRecent()));
+ui.recentClose.addEventListener("click", closeRecent);
+
 // ---------- tags ----------
 
 function getOptions() {
   const o = lsGet(OPTIONS_STORE, null);
   return {
-    type: o?.type?.length ? o.type : ["nota", "idea", "task"],
     moreTags: o?.moreTags?.length ? o.moreTags : ["RELEER", "CLAVE", "ADMIN", "ACCIÓN"],
   };
 }
@@ -296,51 +364,41 @@ async function loadOptions() {
   if (!r.ok) return;
   try {
     const j = JSON.parse(r.text);
-    if (Array.isArray(j.type) && Array.isArray(j.moreTags)) {
-      lsSet(OPTIONS_STORE, { type: j.type, moreTags: j.moreTags });
+    if (Array.isArray(j.moreTags)) {
+      lsSet(OPTIONS_STORE, { moreTags: j.moreTags });
       if (editing) renderChips();
     }
   } catch { /* se usan las opciones guardadas */ }
 }
 
 function noteTags(note) {
-  return {
-    type: note.edit?.type || [...DEFAULT_TAGS.type],
-    moreTags: note.edit?.moreTags || [...DEFAULT_TAGS.moreTags],
-  };
-}
-
-function renderChipGroup(container, options, selected, key) {
-  container.replaceChildren();
-  // Primero las elegidas, para que se vean sin desplazar.
-  const all = [...selected.filter((x) => !options.includes(x)), ...options];
-  all.sort((a, b) => (selected.includes(b) ? 1 : 0) - (selected.includes(a) ? 1 : 0));
-  for (const name of all) {
-    const b = document.createElement("button");
-    b.type = "button";
-    b.className = "chip";
-    b.textContent = name;
-    b.setAttribute("aria-pressed", String(selected.includes(name)));
-    b.addEventListener("click", () => {
-      if (!editing) return;
-      const tags = noteTags(editing);
-      const list = tags[key];
-      const i = list.indexOf(name);
-      if (i >= 0) list.splice(i, 1); else list.push(name);
-      b.setAttribute("aria-pressed", String(i < 0));
-      editing.edit = { ...editing.edit, ...tags };
-      updatePending(editing);
-    });
-    container.append(b);
-  }
+  return { moreTags: note.edit?.moreTags || [...DEFAULT_TAGS.moreTags] };
 }
 
 function renderChips() {
   if (!editing) return;
-  const opts = getOptions();
   const tags = noteTags(editing);
-  renderChipGroup(ui.moreTagsChips, opts.moreTags, tags.moreTags, "moreTags");
-  renderChipGroup(ui.typeChips, opts.type, tags.type, "type");
+  const tarea = tags.moreTags.includes(TAREA_TAG);
+  ui.moreTagsChips.replaceChildren();
+  for (const name of [...getOptions().moreTags.filter((x) => x !== TAREA_TAG), TAREA_TAG]) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "chip" + (name === TAREA_TAG ? " tarea" : tarea ? " off" : "");
+    b.textContent = name;
+    b.setAttribute("aria-pressed", String(tags.moreTags.includes(name)));
+    b.addEventListener("click", () => {
+      if (!editing) return;
+      const t = noteTags(editing);
+      const i = t.moreTags.indexOf(name);
+      if (i >= 0) t.moreTags.splice(i, 1); else t.moreTags.push(name);
+      editing.edit = { ...editing.edit, ...t };
+      updatePending(editing);
+      renderChips();
+    });
+    ui.moreTagsChips.append(b);
+  }
+  ui.tareaHint.hidden = !tarea;
+  ui.saveBtn.textContent = tarea ? "Guardar tarea" : "Guardar en Notion";
 }
 
 async function openEditor(note, prefix = "") {
@@ -402,17 +460,23 @@ ui.saveBtn.addEventListener("click", async () => {
   setState("saving", "Guardando en Notion…");
   showMessage("");
   const tags = noteTags(note);
-  const r = await postWithTimeout(
-    JSON.stringify({ titulo: ui.editTitle.value.trim(), texto, limpiar: false, type: tags.type, more_tags: tags.moreTags }),
-    "application/json", TEXT_TIMEOUT_MS);
+  const tarea = tags.moreTags.includes(TAREA_TAG);
+  const payload = { titulo: ui.editTitle.value.trim(), texto, limpiar: false, type: DEFAULT_TAGS.type, more_tags: tags.moreTags.filter((x) => x !== TAREA_TAG) };
+  if (tarea) Object.assign(payload, { destino: "tareas", fecha: new Date().toLocaleDateString("en-CA") });
+  const r = await postWithTimeout(JSON.stringify(payload), "application/json", TEXT_TIMEOUT_MS);
   setEditorBusy(false);
   if (r.ok) {
     dropPending(note.id);
     closeEditor();
     const title = savedTitle(r.text);
     renderTranscript("", "");
-    setState("saved", `Guardada: ${title}`);
-    showMessage(`Guardada: ${title}`, "ok", r.url);
+    if (tarea) {
+      setState("saved", `Tarea para hoy: ${title}`);
+      showMessage(`Tarea para hoy: ${title}`, "ok", HOY_URL, "Ver tareas de HOY");
+    } else {
+      setState("saved", `Guardada: ${title}`);
+      showMessage(`Guardada: ${title}`, "ok", r.url);
+    }
     openNextReview();
   } else {
     setState("error", "No se guardó");

@@ -14,9 +14,12 @@ PWA para iPhone: grabás una nota de voz, ves la transcripción en vivo y al toc
 4. **Revisar y editar** (por defecto, se apaga en la rueda de ajustes) — al tocar stop, la app pide la
    transcripción final sin guardarla (`captura-voz?modo=transcribir`), muestra título y texto editables y
    recién con "Guardar en Notion" la manda en modo texto con `limpiar: false` (se guarda tal cual).
-   En el editor se eligen los tags ("more tags" y "type"); las opciones se leen de Notion
-   (`captura-voz?modo=opciones`). Por defecto: nota / ADMIN.
-5. **Respaldo** — si el audio falla, manda el texto en vivo a `captura-voz` en modo texto
+   En el editor se eligen los tags de "more tags" (las opciones se leen de Notion con
+   `captura-voz?modo=opciones`; por defecto ADMIN). El tag especial "tarea" manda la nota a la base
+   TAREAS con Due date = hoy (`destino: "tareas"`).
+6. **Recientes** — el ícono de lista muestra las últimas notas (`captura-voz?modo=recientes`) y enlaces a
+   Notas y a la vista "HOY proyecto" de TAREAS.
+7. **Respaldo** — si el audio falla, manda el texto en vivo a `captura-voz` en modo texto
    (`{"texto": "..."}`). Toda nota queda guardada en el iPhone (localStorage + IndexedDB) hasta que se guarda.
 
 Ambas funciones se autentican con el header `x-captura-key`; el código solo tiene su SHA-256.

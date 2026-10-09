@@ -1,6 +1,6 @@
 // Service worker mínimo: la app abre aunque no haya red (las notas pendientes quedan en el iPhone).
 // Red primero, caché como respaldo, así cada deploy nuevo se ve enseguida.
-const CACHE = "voznotes-v3";
+const CACHE = "voznotes-v4";
 const SHELL = ["./", "index.html", "style.css", "app.js", "live.js", "pcm-worklet.js", "manifest.webmanifest", "icons/apple-touch-icon.png", "icons/icon-192.png"];
 
 self.addEventListener("install", (e) => {

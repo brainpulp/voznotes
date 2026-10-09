@@ -13,11 +13,15 @@
 // - Tags: el modo texto acepta "type" y "more_tags" (listas); si faltan, nota / ADMIN.
 // - Opciones: POST a ?modo=opciones devuelve las opciones actuales de "type" y "more tags".
 // - Las notas creadas devuelven su URL de Notion en el header x-nota-url.
+// - Tareas: con "destino": "tareas" la nota va a la base TAREAS con Due date = "fecha"
+//   (YYYY-MM-DD, la fecha local del iPhone) y Status = Not started.
+// - Recientes: POST a ?modo=recientes devuelve las últimas notas de "Notas y proyectos".
 import { encodeBase64 } from "jsr:@std/encoding@1/base64";
 
 // SHA-256 de la clave de captura (la clave en sí no vive en el código).
 const CAPTURE_KEY_SHA256 = "ecb54f9fdaf52ee97b7b77235f8d5fc51e0aa48c21b8552e825d97406482d0a7";
 const DATA_SOURCE_ID = "03b1a394-8ce1-49a9-b1a7-a5117a22847c";
+const TAREAS_DATA_SOURCE_ID = "24175793-2621-8090-bf01-000b98536194";
 const NOTION_VERSION = "2026-03-11";
 const MODEL = Deno.env.get("GEMINI_MODEL") || "gemini-flash-latest";
 const MAX_BYTES = 18 * 1024 * 1024; // límite de audio inline de Gemini (~20 MB por pedido)
@@ -56,7 +60,7 @@ const CORS = {
   "access-control-max-age": "86400",
 };
 
-type Tags = { type: string[]; moreTags: string[] };
+type Tags = { type: string[]; moreTags: string[]; destino?: "tareas"; fecha?: string };
 const TAGS_DEFAULT: Tags = { type: ["nota"], moreTags: ["ADMIN"] };
 
 function listaTags(v: unknown, fallback: string[]): string[] {
@@ -123,14 +127,26 @@ function tituloDesdeTexto(s: string): string {
   return words.length > 60 ? words.slice(0, 60) : words;
 }
 
+function hoyBuenosAires(): string {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Argentina/Buenos_Aires" }).format(new Date());
+}
+
 async function crearNota(titulo: string, cuerpo: string, notionToken: string, tags: Tags = TAGS_DEFAULT): Promise<Response> {
+  const esTarea = tags.destino === "tareas";
+  const titleProp = { title: [{ text: { content: titulo.slice(0, 200) } }] };
   const page = {
-    parent: { type: "data_source_id", data_source_id: DATA_SOURCE_ID },
-    properties: {
-      name: { title: [{ text: { content: titulo.slice(0, 200) } }] },
-      type: { multi_select: tags.type.map((name) => ({ name })) },
-      "more tags": { multi_select: tags.moreTags.map((name) => ({ name })) },
-    },
+    parent: { type: "data_source_id", data_source_id: esTarea ? TAREAS_DATA_SOURCE_ID : DATA_SOURCE_ID },
+    properties: esTarea
+      ? {
+        "Task name": titleProp,
+        "Due date": { date: { start: tags.fecha || hoyBuenosAires() } },
+        "Status": { status: { name: "Not started" } },
+      }
+      : {
+        name: titleProp,
+        type: { multi_select: tags.type.map((name) => ({ name })) },
+        "more tags": { multi_select: tags.moreTags.map((name) => ({ name })) },
+      },
     children: chunks(cuerpo).map((c) => ({
       object: "block",
       type: "paragraph",
@@ -147,7 +163,7 @@ async function crearNota(titulo: string, cuerpo: string, notionToken: string, ta
     console.error("notion_error", n.status, raw.slice(0, 1500));
     return text(`Notion rechazó la nota (${n.status}). Transcripción: ${cuerpo}`, 502);
   }
-  const res = text(`Guardada: ${titulo}`);
+  const res = text(esTarea ? `Tarea para hoy: ${titulo}` : `Guardada: ${titulo}`);
   try {
     const url = String((await n.json()).url || "");
     if (url) res.headers.set("x-nota-url", url);
@@ -155,11 +171,39 @@ async function crearNota(titulo: string, cuerpo: string, notionToken: string, ta
   return res;
 }
 
+// Últimas notas de "Notas y proyectos", para la pantalla Recientes de la PWA.
+async function recientes(notionToken: string): Promise<Response> {
+  const r = await fetch(`https://api.notion.com/v1/data_sources/${DATA_SOURCE_ID}/query`, {
+    method: "POST",
+    headers: { "Authorization": `Bearer ${notionToken}`, "Notion-Version": NOTION_VERSION, "content-type": "application/json" },
+    body: JSON.stringify({
+      filter: { property: "type", multi_select: { contains: "nota" } },
+      sorts: [{ timestamp: "created_time", direction: "descending" }],
+      page_size: 30,
+    }),
+  });
+  if (!r.ok) {
+    console.error("notion_recientes", r.status, (await r.text()).slice(0, 500));
+    return json({ error: `Notion no devolvió las notas (${r.status}).` }, 502);
+  }
+  type Page = { url: string; created_time: string; properties: Record<string, { title?: { plain_text: string }[]; multi_select?: { name: string }[] }> };
+  const notas = ((await r.json()).results || []).map((p: Page) => ({
+    titulo: (p.properties?.name?.title || []).map((t) => t.plain_text).join("") || "(sin título)",
+    url: p.url,
+    creada: p.created_time,
+    tags: (p.properties?.["more tags"]?.multi_select || []).map((o) => o.name),
+  }));
+  return json({ notas });
+}
+
 // Opciones actuales de los tags en Notion, para que la PWA las muestre.
 async function opciones(notionToken: string): Promise<Response> {
-  const r = await fetch(`https://api.notion.com/v1/data_sources/${DATA_SOURCE_ID}`, {
-    headers: { "Authorization": `Bearer ${notionToken}`, "Notion-Version": NOTION_VERSION },
-  });
+  const headers = { "Authorization": `Bearer ${notionToken}`, "Notion-Version": NOTION_VERSION };
+  const [r, t] = await Promise.all([
+    fetch(`https://api.notion.com/v1/data_sources/${DATA_SOURCE_ID}`, { headers }),
+    fetch(`https://api.notion.com/v1/data_sources/${TAREAS_DATA_SOURCE_ID}`, { headers }),
+  ]);
+  if (!t.ok) console.error("notion_tareas_acceso", t.status, (await t.text()).slice(0, 300));
   if (!r.ok) {
     console.error("notion_opciones", r.status, (await r.text()).slice(0, 500));
     return json({ error: `Notion no devolvió las opciones (${r.status}).` }, 502);
@@ -167,7 +211,7 @@ async function opciones(notionToken: string): Promise<Response> {
   const props = (await r.json()).properties || {};
   const nombres = (p: { multi_select?: { options?: { name: string }[] } } | undefined) =>
     (p?.multi_select?.options || []).map((o) => o.name);
-  return json({ type: nombres(props["type"]), moreTags: nombres(props["more tags"]) });
+  return json({ type: nombres(props["type"]), moreTags: nombres(props["more tags"]), tareas: t.ok });
 }
 
 async function proponerTitulo(cuerpo: string, geminiKey: string): Promise<string> {
@@ -197,6 +241,11 @@ async function desdeTexto(req: Request, geminiKey: string, notionToken: string):
     tituloDado = String(body?.titulo ?? "").trim();
     limpiar = body?.limpiar !== false;
     tags = { type: listaTags(body?.type, TAGS_DEFAULT.type), moreTags: listaTags(body?.more_tags, TAGS_DEFAULT.moreTags) };
+    if (body?.destino === "tareas") {
+      tags.destino = "tareas";
+      const f = String(body?.fecha ?? "");
+      if (/^\d{4}-\d{2}-\d{2}$/.test(f)) tags.fecha = f;
+    }
   } catch {
     return text("JSON inválido: mandá {\"texto\": \"...\"}.", 400);
   }
@@ -235,7 +284,9 @@ Deno.serve(async (req) => {
   const notionToken = Deno.env.get("NOTION_TOKEN");
   if (!geminiKey || !notionToken) return text("Faltan GEMINI_API_KEY o NOTION_TOKEN en los secretos de Supabase.", 500);
 
-  if (new URL(req.url).searchParams.get("modo") === "opciones") return opciones(notionToken);
+  const modo = new URL(req.url).searchParams.get("modo");
+  if (modo === "opciones") return opciones(notionToken);
+  if (modo === "recientes") return recientes(notionToken);
 
   const ct = req.headers.get("content-type") || "";
   if (ct.toLowerCase().startsWith("application/json")) return desdeTexto(req, geminiKey, notionToken);
@@ -281,7 +332,7 @@ Deno.serve(async (req) => {
   if (!cuerpo) return text("No se detectó habla en el audio. No se creó la nota.", 422);
   if (!titulo) titulo = cuerpo.slice(0, 60);
 
-  if (new URL(req.url).searchParams.get("modo") === "transcribir") return json({ titulo, texto: cuerpo });
+  if (modo === "transcribir") return json({ titulo, texto: cuerpo });
 
   return crearNota(titulo, cuerpo, notionToken);
 });

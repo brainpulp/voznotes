@@ -178,8 +178,6 @@ html, body {
 .edit-actions #saveBtn { flex: 2; }
 
 a.icon-btn { text-decoration: none; }
-.tag-group { display: flex; align-items: center; gap: 10px; min-width: 0; }
-.tag-label { color: var(--muted); font-size: 14px; width: 38px; flex: none; }
 .chips { display: flex; flex-wrap: wrap; gap: 8px; min-width: 0; flex: 1; }
 .chips.scroll { flex-wrap: nowrap; overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: none; padding-bottom: 2px; }
 .chips.scroll::-webkit-scrollbar { display: none; }
@@ -193,3 +191,27 @@ a.icon-btn { text-decoration: none; }
 .chip[aria-pressed="true"] { background: #3a1d1b; border-color: var(--red); color: #fff; }
 .chip:disabled { opacity: .5; }
 #messageLink { color: #9fc8ff; font-weight: 600; white-space: nowrap; }
+
+.chip.tarea { border-style: dashed; }
+.chip.tarea[aria-pressed="true"] { background: #13301d; border-color: var(--green); border-style: solid; }
+.chip.off { opacity: .35; }
+.tarea-hint { margin: -2px 0 0; color: #9ff0b0; font-size: 14px; }
+.tarea-hint[hidden] { display: none; }
+
+.recent { flex: 1; display: flex; flex-direction: column; min-height: 0; padding-bottom: 16px; }
+.recent[hidden] { display: none; }
+.recent-head { display: flex; align-items: center; justify-content: space-between; }
+.recent-head h2 { margin: 0; font-size: 24px; }
+.recent-links { display: flex; gap: 10px; margin: 8px 0 12px; }
+.recent-links .small-btn { flex: 1; display: grid; place-items: center; text-decoration: none; }
+.recent-status { color: var(--muted); margin: 4px 0; font-size: 15px; }
+.recent-status:empty { display: none; }
+.recent-list { list-style: none; margin: 0; padding: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; flex: 1; }
+.recent-list a {
+  display: block; padding: 12px 4px; border-bottom: 1px solid var(--border);
+  color: var(--text); text-decoration: none;
+}
+.recent-list a:active { background: var(--surface); }
+.recent-title { font-size: 17px; font-weight: 600; }
+.recent-meta { color: var(--muted); font-size: 14px; margin-top: 2px; }
+.editor > .chips { flex: none; }
