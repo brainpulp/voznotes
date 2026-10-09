@@ -19,7 +19,7 @@ const ui = {
   status: $("status"), statusText: $("statusText"), timer: $("timer"),
   placeholder: $("placeholder"), finalText: $("finalText"), interimText: $("interimText"),
   transcript: $("transcript"), message: $("message"),
-  recordBtn: $("recordBtn"), hint: $("hint"), meter: $("meter"), meterBar: $("meterBar"),
+  recordBtn: $("recordBtn"), hint: $("hint"), bars: [...document.querySelectorAll("#bars i")],
   pending: $("pending"), pendingText: $("pendingText"), retryBtn: $("retryBtn"),
   settingsBtn: $("settingsBtn"), keyDialog: $("keyDialog"), keyForm: $("keyForm"),
   keyInput: $("keyInput"), keyError: $("keyError"), keyCancel: $("keyCancel"),
@@ -112,9 +112,17 @@ function setButton(mode) {
   ui.recordBtn.classList.toggle("recording", mode === "recording");
   ui.recordBtn.disabled = mode === "disabled";
   ui.recordBtn.setAttribute("aria-label", mode === "recording" ? "Detener y guardar" : "Grabar");
-  ui.hint.textContent = mode === "recording"
-    ? (reviewOn() ? "Tocá para detener y revisar" : "Tocá para detener y guardar")
-    : mode === "disabled" ? "" : "Grabar";
+  ui.hint.textContent = mode === "recording" ? "0:00" : mode === "disabled" ? "" : "Grabar";
+}
+
+// Barras del botón: siguen el volumen de la voz (forma de onda simétrica).
+const BAR_SHAPE = [0.45, 0.75, 1, 0.75, 0.45];
+function showLevel(level) {
+  const v = Math.min(1, Math.sqrt(level) * 2.2);
+  ui.bars.forEach((b, i) => {
+    const jitter = 0.75 + Math.random() * 0.5;
+    b.style.height = `${Math.round(8 + 48 * v * BAR_SHAPE[i] * jitter)}px`;
+  });
 }
 
 function fmtTime(ms) {
@@ -577,7 +585,7 @@ async function startRecording() {
     r.node = new AudioWorkletNode(r.ctx, "pcm16-downsampler");
     r.node.port.onmessage = (e) => {
       r.live.sendPcm(e.data.pcm);
-      ui.meterBar.style.width = `${Math.min(100, e.data.level * 400)}%`;
+      showLevel(e.data.level);
     };
     const mute = r.ctx.createGain();
     mute.gain.value = 0;
@@ -600,10 +608,7 @@ async function startRecording() {
 
   try { r.wakeLock = await navigator.wakeLock?.request("screen"); } catch { /* opcional */ }
 
-  ui.meter.classList.add("on");
-  ui.timer.hidden = false;
-  ui.timer.textContent = "0:00";
-  r.tick = setInterval(() => { ui.timer.textContent = fmtTime(Date.now() - r.startedAt); }, 500);
+  r.tick = setInterval(() => { ui.hint.textContent = fmtTime(Date.now() - r.startedAt); }, 500);
   setButton("recording");
   renderPending();
   if (ui.status.dataset.state !== "listening") setState("connecting", "Conectando…");
@@ -616,8 +621,7 @@ function cleanup(r) {
   try { r.ctx && r.ctx.close(); } catch { /* nada */ }
   for (const tr of r.stream.getTracks()) tr.stop();
   try { r.wakeLock && r.wakeLock.release(); } catch { /* nada */ }
-  ui.meter.classList.remove("on");
-  ui.meterBar.style.width = "0";
+  showLevel(0);
 }
 
 function stopRecorder(r) {
